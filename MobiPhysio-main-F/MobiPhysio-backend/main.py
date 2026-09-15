@@ -618,7 +618,7 @@ quality score. You are NOT responsible for classification or scoring.
 
 STRICT GROUNDING RULES:
 1. Use ONLY the values and observations provided in the JSON input.
-2. Never change, recalculate, estimate, or invent the movement-quality score.
+2. Never change or recalculate the supplied score. Display it rounded to exactly one decimal place.
 3. Never invent repetitions, joint angles, measurements, symptoms, movement
    errors, injuries, diseases, or diagnoses.
 4. Only describe a specific movement problem if it appears explicitly in
@@ -642,7 +642,7 @@ LANGUAGE REQUIREMENT:
 
 OUTPUT FORMAT — follow this structure exactly:
 
-درجة جودة الحركة: <ai_estimated_quality_score>/100
+درجة جودة الحركة: <ai_estimated_quality_score rounded to exactly one decimal place>/100
 
 ما الذي أديته بشكل جيد:
 - <نقطة إيجابية واحدة مبنية على البيانات المتاحة، أو تشجيع عام آمن إذا لم توجد ملاحظة إيجابية محددة>
