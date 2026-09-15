@@ -605,105 +605,91 @@ Coach's Note:
 <one encouraging sentence>
 """.strip()
 
+
 PROMPT_V2 = """
 You are Riayah's AI exercise-coach feedback layer.
-Your job is to convert validated computer-vision results into clear, supportive exercise feedback.
+
+Your job is to convert validated computer-vision and machine-learning results
+into clear, supportive Arabic feedback for a person performing a home
+physiotherapy exercise.
+
+The application has already identified the exercise and estimated the movement
+quality score. You are NOT responsible for classification or scoring.
 
 STRICT GROUNDING RULES:
-1. Use ONLY the values and observations in the provided JSON.
-2. Never invent measurements, repetitions, angles, symptoms, injuries, diagnoses, or exercise errors.
-3. Never change, recalculate, or round the supplied score except normal display rounding.
-4. If observations are empty, do not pretend that a specific movement fault was detected. Use only safe, general encouragement about controlled and consistent practice.
-5. Do not recommend medication, treatment, or clinical decisions.
-6. Do not claim that the system can replace a qualified physiotherapist.
-7. Keep the language simple and practical.
+1. Use ONLY the values and observations provided in the JSON input.
+2. Never change, recalculate, estimate, or invent the movement-quality score.
+3. Never invent repetitions, joint angles, measurements, symptoms, movement
+   errors, injuries, diseases, or diagnoses.
+4. Only describe a specific movement problem if it appears explicitly in
+   "observations".
+5. If "observations" is empty, do NOT claim that a specific fault was detected.
+   Instead, provide safe general coaching about controlled, steady, and
+   consistent movement.
+6. If classification confidence is low, you may mention that the exercise
+   identification is less certain, but do not guess another exercise.
+7. Do not recommend medication, medical treatment, or clinical decisions.
+8. Do not claim that Riayah replaces a qualified physiotherapist.
+9. Keep the feedback concise, practical, supportive, and easy to understand.
 
 LANGUAGE REQUIREMENT:
-- Always write the entire user-facing feedback in clear, natural Arabic suitable for a Saudi Arabic-speaking user.
-- Do not output English sentences or English headings.
-- Exercise names may remain in English only if they are supplied by the application and no Arabic label is available.
-- Never translate, modify, estimate, or invent validated numerical values.
+- Write the ENTIRE user-facing response in clear, natural Arabic.
+- Do not use English headings or English explanatory sentences.
+- Exercise names may remain in English only when the exercise name supplied
+  in the JSON is in English and no Arabic label is provided.
+- Keep all validated numerical values exactly grounded in the JSON.
+- Use a warm and professional tone suitable for Riayah users.
 
-OUTPUT FORMAT — follow exactly in Arabic:
+OUTPUT FORMAT — follow this structure exactly:
+
 درجة جودة الحركة: <ai_estimated_quality_score>/100
 
 ما الذي أديته بشكل جيد:
-- <نقطة قوة واحدة مبنية فقط على البيانات المتاحة>
+- <نقطة إيجابية واحدة مبنية على البيانات المتاحة، أو تشجيع عام آمن إذا لم توجد ملاحظة إيجابية محددة>
 
 ما الذي يمكنك تحسينه:
-- <نقطة تحسين واحدة مبنية على البيانات، أو نصيحة عامة آمنة إذا لم توجد ملاحظة محددة>
+- <ملاحظة تحسين مبنية فقط على observations، أو نصيحة عامة آمنة إذا لم توجد ملاحظة محددة>
 
 نصيحة للجلسة القادمة:
-- <نصيحة عملية قصيرة>
+- <نصيحة عملية قصيرة وآمنة>
 
 ملاحظة رعاية:
-<جملة تشجيعية واحدة>
+<جملة تشجيعية قصيرة>
 
 تنبيه: هذا التقييم مخصص لدعم التمارين فقط، ولا يُعد تشخيصًا طبيًا ولا بديلًا عن توجيهات أخصائي العلاج الطبيعي المؤهل.
 """.strip()
 
 
-def feedback_quality_score(text: str, payload: Dict[str, Any]) -> int:
-    """Simple deterministic evaluator used to select the better of V1/V2.
-    Higher is better. It rewards required structure, grounding, and safety.
-    """
-    if not text or not feedback_is_safe(text):
-        return -100
-    t = text.lower()
-    score = 0
-    required = [
-        "movement score:",
-        "what you did well:",
-        "what to improve:",
-        "next session tip:",
-        "coach's note:",
-        "not a medical diagnosis",
-    ]
-    score += 10 * sum(x in t for x in required)
-
-    # Grounding checks for the values that must be preserved.
-    supplied_score = f"{payload['ai_estimated_quality_score']:.0f}"
-    supplied_exercise = str(payload["exercise"]).lower()
-    if supplied_score in t:
-        score += 10
-    if supplied_exercise in t:
-        score += 10
-
-    # Penalize unsupported medical/clinical claims and invented metrics.
-    bad = ["diagnosis", "injury", "disease", "medication", "prescribe"]
-    # The disclaimer legitimately contains diagnosis; only penalize unsafe phrases.
-    unsafe_claims = ["you have an injury", "you have a disease", "you are injured", "take medication"]
-    score -= 30 * sum(x in t for x in unsafe_claims)
-
-    # Prefer concise feedback for an end-user MVP.
-    if len(text) <= 1800:
-        score += 5
-    if len(text) <= 1200:
-        score += 5
-    return score
-
-
-def generate_with_prompt(client, model_name: str, system_prompt: str, payload: Dict[str, Any]) -> str:
+def generate_with_prompt(
+    client,
+    model_name: str,
+    system_prompt: str,
+    payload: Dict[str, Any],
+) -> str:
     user_prompt = (
-        "Generate feedback from this validated CV result. Do not use information outside this JSON:\n"
-        + json.dumps(payload, indent=2)
+        "اكتب ملاحظات رعاية اعتمادًا فقط على نتيجة تحليل الحركة التالية. "
+        "لا تستخدم أي معلومات غير موجودة في JSON، ولا تخترع أي قياسات أو ملاحظات.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
     )
+
     response = client.responses.create(
         model=model_name,
         instructions=system_prompt,
         input=user_prompt,
-        max_output_tokens=220,
+        max_output_tokens=300,
     )
+
     return response.output_text.strip()
 
 
 def llm_feedback(payload: Dict[str, Any]) -> str:
-    """Generate production feedback with Prompt V2 only.
-
-    Prompt V1 vs V2 remains part of the notebook/report experiment. In the
-    deployed MVP, using only the selected V2 prompt avoids two LLM calls for
-    every uploaded video and reduces request latency.
     """
+    Generate Riayah Arabic feedback using the selected Prompt V2.
+
+    Prompt V1 is preserved for the experiment/report comparison.
+    The deployed MVP uses Prompt V2 only.
+    """
+
     api_key = os.getenv("OPENAI_API_KEY")
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
 
@@ -713,18 +699,25 @@ def llm_feedback(payload: Dict[str, Any]) -> str:
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, timeout=20.0)
+        client = OpenAI(
+            api_key=api_key,
+            timeout=20.0,
+        )
 
         feedback = generate_with_prompt(
-            client,
-            model_name,
-            PROMPT_V2,
-            payload,
+            client=client,
+            model_name=model_name,
+            system_prompt=PROMPT_V2,
+            payload=payload,
         )
+
         return ensure_safe_feedback(feedback, payload)
 
     except Exception as exc:
-        print(f"[LLM fallback] {type(exc).__name__}: {exc}", flush=True)
+        print(
+            f"[LLM fallback] {type(exc).__name__}: {exc}",
+            flush=True,
+        )
         return deterministic_feedback(payload)
 
 
